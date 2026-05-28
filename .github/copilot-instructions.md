@@ -1,4 +1,4 @@
-# GitHub Copilot Instructions
+  # GitHub Copilot Instructions
 
 > **Note**: This file is located at `.github/copilot-instructions.md` and is used by GitHub Copilot to understand project context.
 

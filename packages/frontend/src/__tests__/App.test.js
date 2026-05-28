@@ -1,136 +1,162 @@
-import React, { act } from 'react';
+import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { rest } from 'msw';
-import { setupServer } from 'msw/node';
 import App from '../App';
 
-// Mock server to intercept API requests
-const server = setupServer(
-  // GET /api/items handler
-  rest.get('/api/items', (req, res, ctx) => {
-    return res(
-      ctx.status(200),
-      ctx.json([
-        { id: 1, name: 'Test Item 1', created_at: '2023-01-01T00:00:00.000Z' },
-        { id: 2, name: 'Test Item 2', created_at: '2023-01-02T00:00:00.000Z' },
-      ])
-    );
-  }),
-  
-  // POST /api/items handler
-  rest.post('/api/items', (req, res, ctx) => {
-    const { name } = req.body;
-    
-    if (!name || name.trim() === '') {
-      return res(
-        ctx.status(400),
-        ctx.json({ error: 'Item name is required' })
-      );
-    }
-    
-    return res(
-      ctx.status(201),
-      ctx.json({
-        id: 3,
-        name,
-        created_at: new Date().toISOString(),
-      })
-    );
-  })
-);
+const okResponse = (payload) =>
+  Promise.resolve({
+    ok: true,
+    json: async () => payload,
+  });
 
-// Setup and teardown for the mock server
-beforeAll(() => server.listen());
-afterEach(() => server.resetHandlers());
-afterAll(() => server.close());
+const errorResponse = (message) =>
+  Promise.resolve({
+    ok: false,
+    json: async () => ({ error: { message } }),
+  });
 
 describe('App Component', () => {
-  test('renders the header', async () => {
-    await act(async () => {
-      render(<App />);
-    });
-    expect(screen.getByText('React Frontend with Node Backend')).toBeInTheDocument();
-    expect(screen.getByText('Connected to in-memory database')).toBeInTheDocument();
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
-  test('loads and displays items', async () => {
-    await act(async () => {
-      render(<App />);
-    });
-    
-    // Initially shows loading state
-    expect(screen.getByText('Loading data...')).toBeInTheDocument();
-    
-    // Wait for items to load
+  test('renders header and loads tasks', async () => {
+    jest.spyOn(global, 'fetch').mockImplementation(() =>
+      okResponse([
+        {
+          id: 1,
+          title: 'Task from API',
+          description: 'Description',
+          priority: 'medium',
+          dueDate: null,
+          completed: false,
+          createdAt: '2026-05-28T00:00:00.000Z',
+          updatedAt: '2026-05-28T00:00:00.000Z',
+        },
+      ])
+    );
+
+    render(<App />);
+
+    expect(screen.getByText('TODO App')).toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getByText('Test Item 1')).toBeInTheDocument();
-      expect(screen.getByText('Test Item 2')).toBeInTheDocument();
+      expect(screen.getByText('Task from API')).toBeInTheDocument();
     });
   });
 
-  test('adds a new item', async () => {
+  test('adds a new task', async () => {
     const user = userEvent.setup();
-    
-    await act(async () => {
-      render(<App />);
-    });
-    
-    // Wait for items to load
+
+    const fetchMock = jest.spyOn(global, 'fetch');
+    fetchMock
+      .mockImplementationOnce(() => okResponse([]))
+      .mockImplementationOnce(() =>
+        okResponse({
+          id: 2,
+          title: 'New Task',
+          description: '',
+          priority: 'medium',
+          dueDate: null,
+          completed: false,
+          createdAt: '2026-05-28T00:00:00.000Z',
+          updatedAt: '2026-05-28T00:00:00.000Z',
+        })
+      )
+      .mockImplementationOnce(() =>
+        okResponse([
+          {
+            id: 2,
+            title: 'New Task',
+            description: '',
+            priority: 'medium',
+            dueDate: null,
+            completed: false,
+            createdAt: '2026-05-28T00:00:00.000Z',
+            updatedAt: '2026-05-28T00:00:00.000Z',
+          },
+        ])
+      );
+
+    render(<App />);
+
     await waitFor(() => {
-      expect(screen.queryByText('Loading data...')).not.toBeInTheDocument();
+      expect(screen.getByText('No tasks found. Add your first task.')).toBeInTheDocument();
     });
-    
-    // Fill in the form and submit
-    const input = screen.getByPlaceholderText('Enter item name');
-    await act(async () => {
-      await user.type(input, 'New Test Item');
-    });
-    
-    const submitButton = screen.getByText('Add Item');
-    await act(async () => {
-      await user.click(submitButton);
-    });
-    
-    // Check that the new item appears
+
+    await user.type(screen.getByLabelText(/title/i), 'New Task');
+    await user.click(screen.getByRole('button', { name: 'Add Task' }));
+
     await waitFor(() => {
-      expect(screen.getByText('New Test Item')).toBeInTheDocument();
+      expect(screen.getByText('New Task')).toBeInTheDocument();
     });
   });
 
-  test('handles API error', async () => {
-    // Override the default handler to simulate an error
-    server.use(
-      rest.get('/api/items', (req, res, ctx) => {
-        return res(ctx.status(500));
-      })
-    );
-    
-    await act(async () => {
-      render(<App />);
-    });
-    
-    // Wait for error message
+  test('shows API error message', async () => {
+    jest.spyOn(global, 'fetch').mockImplementation(() => errorResponse('Failed to fetch tasks'));
+
+    render(<App />);
+
     await waitFor(() => {
-      expect(screen.getByText(/Failed to fetch data/)).toBeInTheDocument();
+      expect(screen.getByText('Failed to fetch tasks')).toBeInTheDocument();
     });
   });
 
-  test('shows empty state when no items', async () => {
-    // Override the default handler to return empty array
-    server.use(
-      rest.get('/api/items', (req, res, ctx) => {
-        return res(ctx.status(200), ctx.json([]));
-      })
-    );
-    
-    await act(async () => {
-      render(<App />);
-    });
-    
-    // Wait for empty state message
+  test('toggles completion state', async () => {
+    const user = userEvent.setup();
+    const fetchMock = jest.spyOn(global, 'fetch');
+
+    fetchMock
+      .mockImplementationOnce(() =>
+        okResponse([
+          {
+            id: 9,
+            title: 'Complete flow task',
+            description: '',
+            priority: 'high',
+            dueDate: null,
+            completed: false,
+            createdAt: '2026-05-28T00:00:00.000Z',
+            updatedAt: '2026-05-28T00:00:00.000Z',
+          },
+        ])
+      )
+      .mockImplementationOnce(() =>
+        okResponse({
+          id: 9,
+          title: 'Complete flow task',
+          description: '',
+          priority: 'high',
+          dueDate: null,
+          completed: true,
+          createdAt: '2026-05-28T00:00:00.000Z',
+          updatedAt: '2026-05-28T00:00:00.000Z',
+        })
+      )
+      .mockImplementationOnce(() =>
+        okResponse([
+          {
+            id: 9,
+            title: 'Complete flow task',
+            description: '',
+            priority: 'high',
+            dueDate: null,
+            completed: true,
+            createdAt: '2026-05-28T00:00:00.000Z',
+            updatedAt: '2026-05-28T00:00:00.000Z',
+          },
+        ])
+      );
+
+    render(<App />);
+
     await waitFor(() => {
-      expect(screen.getByText('No items found. Add some!')).toBeInTheDocument();
+      expect(screen.getByText('Complete flow task')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('checkbox', { name: /mark complete flow task as completed/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Completed')).toBeInTheDocument();
     });
   });
 });
